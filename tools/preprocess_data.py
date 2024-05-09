@@ -1,5 +1,23 @@
 # Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
 
+'''
+该脚本的作用是将json文件中的文本提取出来，然后进行分句处理，最后进行编码处理，生成bin文件
+1. 读取json文件，将json文件中的文本提取出来 对应的函数是split
+2. 对文本进行分句处理 对应的函数是split_sentences
+3. 对文本进行编码处理，使用tokenizer进行编码 对应的函数是 encode
+4. 将编码后的文本写入到bin文件中 对应的函数是 process_json_file
+5. 最后将所有的bin文件进行合并，生成一个大的bin文件 对应的函数是 main
+6. 生成的bin文件可以作为megatron的输入数据
+
+输入的json为jsonl格式文件，示例为：
+{"src": "www.nvidia.com", "text": "The quick brown fox", "type": "Eng", "id": "0", "title": "First Part"}
+
+这个脚本会把每个json的text提取出来，转换成Megatron-LM所需的bin和idx文件。
+
+
+idx文件是一个索引文件，用于存储bin文件的偏移量，bin文件是一个二进制文件，存储了文本的编码后的数据。
+'''
+
 """Processing large data for pretraining."""
 import argparse
 import math
@@ -26,7 +44,9 @@ from megatron.core.datasets import indexed_dataset
 
 # https://stackoverflow.com/questions/33139531/preserve-empty-lines-with-nltks-punkt-tokenizer
 class CustomLanguageVars(nltk.tokenize.punkt.PunktLanguageVars):
-
+    '''
+    Custom language vars to keep newlines between sentences
+    '''
     _period_context_fmt = r"""
         \S*                          # some word material
         %(SentEndChars)s             # a potential sentence ending
@@ -71,6 +91,10 @@ class Encoder(object):
         else:
             Encoder.splitter = IdentitySplitter()
 
+    // 将json文件中的文本提取出来
+    // 1. 将json文件中的文本提取出来
+    // 2. 将文本进行分句处理
+    // 3. 将文本进行编码处理
     def split(self, json_line):
         data = json.loads(json_line)
         output = {}
@@ -81,6 +105,7 @@ class Encoder(object):
             output[key] = [tokens for partial in tokens_list for tokens in partial]
         return json.dumps(output), len(json_line)
 
+    // 将文本进行分句处理
     def encode(self, json_line):
         data = json.loads(json_line)
         ids = {}
@@ -107,6 +132,10 @@ class Encoder(object):
 
 
 class Partition(object):
+    '''
+    Partition the input data into multiple files and process them in parallel.
+    将输入数据分成多个文件并并行处理它们。
+    '''
     def __init__(self, args, workers):
         self.args = args
         self.workers = workers
@@ -121,6 +150,9 @@ class Partition(object):
                   file=sys.stderr)
 
     def split_sentences(self, file_name):
+        '''
+        Split sentences in the input file and write to the output file.
+        '''
         input_file_name, output_file_name = file_name
         print("Opening", input_file_name)
         fin = open(input_file_name, 'r', encoding='utf-8')
@@ -184,7 +216,36 @@ class Partition(object):
         builders[key].finalize(output_idx_files[key])
 
 
+'''
+python preprocess_data.py  \
+    --input /path/to/input.json \
+    --json-keys text \
+    --split-sentences \
+    --tokenizer-type BertWordPieceLowerCase \
+    --output-prefix /path/to/output \
+    --workers 8 \
+    --partitions 1
+'''
 def get_args():
+    '''
+    --input：指定输入的 JSON 文件的路径。
+    --json-keys：指定要从 JSON 中提取的键的列表，默认为['text']。这些键将被用于后续的处理。
+    --split-sentences：如果设置了该参数，则将文档拆分为句子。
+    --keep-newlines：如果设置了该参数，则在拆分句子时保留句子之间的换行符。
+    --tokenizer-type：指定要使用的分词器的类型。可选的值有：BertWordPieceLowerCase、BertWordPieceCase、GPT2BPETokenizer、SentencePieceTokenizer、GPTSentencePieceTokenizer、Llama2Tokenizer、NullTokenizer。
+    --tokenizer-model：指定 YTTM 分词器模型的路径。
+    --vocab-file：指定词汇表文件的路径。
+    --vocab-size：指定用于 NullTokenizer 的词汇表大小，默认为 786。
+    --merge-file：指定 BPE 合并文件的路径（如果需要）。
+    --append-eod：如果设置了该参数，则在文档的末尾添加一个 <eod> 标记。
+    --lang：指定用于 NLTK 句子拆分的语言，默认为英语。
+    --output-prefix：指定二进制输出文件的路径前缀。
+    --workers：指定要启动的工作进程数。对于快速预处理，默认值为 (workers * partitions) = 可用的 CPU 核心数。
+    --partitions：指定文件分区数，默认为 1。
+    --log-interval：指定进度更新之间的间隔。
+    --keep-sequential-samples：如果设置了该参数，并且 partitions>1，则确保 .jsonl 文件中样本的顺序保持不变。
+    此外，函数还设置了一些默认值和虚拟值，用于分词器的处理。
+    '''
     parser = argparse.ArgumentParser()
     group = parser.add_argument_group(title='input data')
     group.add_argument('--input', type=str, required=True,
